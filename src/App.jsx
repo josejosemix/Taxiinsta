@@ -107,9 +107,14 @@ function App() {
         </div>
       </nav>
 
-      <main className="flex-1 relative flex flex-col">
-        <div className="flex-1 h-full w-full">
-          <MapContainer center={myLocation} zoom={15} className="h-full w-full">
+      <main className="flex-1 relative flex flex-col h-[calc(100vh-73px)]">
+        {/* El contenedor del mapa ahora tiene una altura definida del 100% */}
+        <div className="absolute inset-0 w-full h-full">
+          <MapContainer 
+            center={myLocation} 
+            zoom={15} 
+            style={{ height: '100%', width: '100%' }} // Aseguramos altura aquí también
+          >
             <TileLayer url={darkMode ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"} />
             <ChangeView center={myLocation} />
             
@@ -123,9 +128,10 @@ function App() {
           </MapContainer>
         </div>
 
+        {/* El botón flotante de estado */}
         {userRole === 'conductor' && (
-          <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-[1000] bg-green-500 text-white px-8 py-4 rounded-full font-black shadow-2xl animate-pulse">
-            TRANSMITIENDO UBICACIÓN GPS
+          <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-[1000] bg-green-500 text-white px-8 py-4 rounded-full font-black shadow-2xl animate-pulse whitespace-nowrap">
+            TRANSMITIENDO GPS
           </div>
         )}
       </main>
