@@ -36,7 +36,7 @@ function App() {
           await supabase
             .from('perfiles')
             .upsert({ 
-              id: 'ID_DE_PRUEBA_1', // Temporalmente manual hasta tener Auth
+              id: 'ID_DE_PRUEBA_1', // Temporalmente manual hasta tener Auth-
               nombre: userName,
               rol: 'conductor',
               latitud: latitude,
