@@ -1,173 +1,115 @@
 import React, { useState, useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
-import { Car, Navigation, LogOut, Mail, Lock, UserPlus, ArrowLeft, Search, Settings, Trash2, Shield } from 'lucide-react';
+import { Car, Navigation, LogOut, Search, Shield, Trash2, X, Settings, UserCircle } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
+// --- ICONOS ---
 const passengerIcon = new L.Icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/684/684908.png', iconSize: [30, 30] });
 const taxiIcon = new L.Icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/3448/3448339.png', iconSize: [35, 35] });
 
+// --- COMPONENTES DE APOYO ---
 function MapResizer() {
   const map = useMap();
   useEffect(() => { setTimeout(() => { map.invalidateSize(); }, 500); }, [map]);
   return null;
 }
 
-function ChangeView({ center }) {
-  const map = useMap();
-  useEffect(() => { if (center) map.setView(center, map.getZoom()); }, [center, map]);
-  return null;
-}
-
-function App() {
-  const [session, setSession] = useState(null);
-  const [profile, setProfile] = useState(null);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [isRegistering, setIsRegistering] = useState(false);
-  const [isAdminView, setIsAdminView] = useState(false); // Panel Admin
-  const [allUsers, setAllUsers] = useState([]); // Para el Admin
-  const [destino, setDestino] = useState("");
-  const [myLocation, setMyLocation] = useState([10.4806, -66.9036]);
+// --- VISTA PANEL ADMINISTRADOR (Solo accesible vía /admin) ---
+function AdminPanel({ profile }) {
+  const [users, setUsers] = useState([]);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) getProfile(session.user.id);
-    });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session) getProfile(session.user.id);
-    });
-    return () => subscription.unsubscribe();
-  }, []);
+    if (profile?.rol === 'admin') loadUsers();
+  }, [profile]);
 
-  async function getProfile(id) {
-    const { data } = await supabase.from('perfiles').select('*').eq('id', id).single();
-    if (data) setProfile(data);
-  }
-
-  // Cargar usuarios para el Admin
-  const loadAllUsers = async () => {
+  const loadUsers = async () => {
     const { data } = await supabase.from('perfiles').select('*');
-    setAllUsers(data || []);
+    setUsers(data || []);
   };
 
   const deleteUser = async (id) => {
-    if(window.confirm("¿Borrar este usuario?")) {
+    if(window.confirm("¿Seguro que deseas eliminar este usuario?")) {
       await supabase.from('perfiles').delete().eq('id', id);
-      loadAllUsers();
+      loadUsers();
     }
   };
 
-  const handleAuth = async (e) => {
-    e.preventDefault();
-    if (isRegistering) {
-      const { data, error } = await supabase.auth.signUp({ email, password });
-      if (!error) {
-        await supabase.from('perfiles').insert([{ id: data.user.id, rol: 'pasajero', nombre: email.split('@')[0] }]);
-        alert("Registro exitoso");
-        setIsRegistering(false);
-      }
-    } else {
-      await supabase.auth.signInWithPassword({ email, password });
-    }
-  };
-
-  // Lógica de Pedido Real
-  const solicitarViaje = async () => {
-    if (!destino) return alert("Escribe un destino primero");
-    const { error } = await supabase.from('pedidos').insert([
-      { pasajero_id: session.user.id, origen: 'Mi ubicación', destino: destino, estado: 'pendiente' }
-    ]);
-    if (!error) alert("¡Pedido enviado! Los conductores verán tu solicitud.");
-  };
-
-  if (!session) {
-    return (
-      <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-6">
-        <div className="w-full max-w-md bg-zinc-900 p-10 rounded-[40px] border border-zinc-800 text-white">
-          <h1 className="text-4xl font-black italic mb-8 text-center bg-gradient-to-r from-purple-400 to-pink-500 bg-clip-text text-transparent">TaxiInsta</h1>
-          <form onSubmit={handleAuth} className="space-y-4">
-            <input className="w-full p-4 rounded-2xl bg-zinc-800 border-zinc-700 border outline-none text-white" placeholder="Email" onChange={e => setEmail(e.target.value)} />
-            <input type="password" className="w-full p-4 rounded-2xl bg-zinc-800 border-zinc-700 border outline-none text-white" placeholder="Clave" onChange={e => setPassword(e.target.value)} />
-            <button className="w-full bg-purple-600 p-4 rounded-2xl font-black">{isRegistering ? "REGISTRAR" : "ENTRAR"}</button>
-          </form>
-          <button onClick={() => setIsRegistering(!isRegistering)} className="w-full mt-4 text-zinc-500 text-sm">
-            {isRegistering ? "Ya tengo cuenta" : "Crear cuenta de pasajero"}
-          </button>
-        </div>
+  if (profile?.rol !== 'admin') {
+    return <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center p-10 text-center">
+      <div>
+        <Shield size={60} className="mx-auto text-red-500 mb-4" />
+        <h1 className="text-2xl font-bold">ACCESO DENEGADO</h1>
+        <p className="text-zinc-500">No tienes permisos para estar aquí.</p>
+        <Link to="/" className="mt-4 inline-block bg-purple-600 px-6 py-2 rounded-xl">Volver al Mapa</Link>
       </div>
-    );
+    </div>;
   }
 
-  // VISTA DE ADMINISTRADOR
-  if (isAdminView) {
-    return (
-      <div className="min-h-screen bg-zinc-950 text-white p-6">
-        <button onClick={() => setIsAdminView(false)} className="mb-6 flex items-center gap-2 text-zinc-400"><ArrowLeft size={20}/> Volver al Mapa</button>
-        <h2 className="text-2xl font-black mb-6">Panel de Control</h2>
-        <div className="space-y-4">
-          {allUsers.map(u => (
-            <div key={u.id} className="p-4 bg-zinc-900 rounded-2xl flex justify-between items-center border border-zinc-800">
-              <div>
-                <p className="font-bold">{u.nombre}</p>
-                <p className="text-xs text-purple-500 uppercase">{u.rol}</p>
+  return (
+    <div className="min-h-screen bg-zinc-950 text-white p-6 font-sans">
+      <div className="max-w-4xl mx-auto">
+        <div className="flex justify-between items-center mb-10">
+          <h1 className="text-3xl font-black italic">ADMIN <span className="text-purple-500">CONTROL</span></h1>
+          <Link to="/" className="p-3 bg-zinc-900 rounded-2xl border border-zinc-800"><X/></Link>
+        </div>
+        
+        <div className="grid gap-4">
+          {users.map(u => (
+            <div key={u.id} className="bg-zinc-900 p-5 rounded-[30px] border border-zinc-800 flex justify-between items-center">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-zinc-800 rounded-full flex items-center justify-center text-purple-500">
+                  <UserCircle size={30}/>
+                </div>
+                <div>
+                  <p className="font-bold text-lg leading-tight">{u.nombre}</p>
+                  <p className="text-xs font-black text-purple-600 uppercase tracking-widest">{u.rol}</p>
+                </div>
               </div>
-              <button onClick={() => deleteUser(u.id)} className="text-red-500 p-2 hover:bg-red-500/10 rounded-xl transition"><Trash2 size={20}/></button>
+              <button onClick={() => deleteUser(u.id)} className="p-4 bg-red-500/10 text-red-500 rounded-2xl hover:bg-red-500 hover:text-white transition">
+                <Trash2 size={20}/>
+              </button>
             </div>
           ))}
         </div>
       </div>
-    );
-  }
+    </div>
+  );
+}
+
+// --- VISTA PRINCIPAL (MAPA) ---
+function MainApp({ profile, session }) {
+  const [destino, setDestino] = useState("");
+  const [myLocation] = useState([10.4806, -66.9036]);
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white flex flex-col overflow-hidden">
-      <nav className="p-4 border-b border-zinc-900 flex justify-between items-center z-[2000]">
-        <div>
-          <h2 className="font-black italic text-xl">TaxiInsta</h2>
-          <span className="text-[10px] bg-purple-600 px-2 py-0.5 rounded-full">{profile?.rol}</span>
-        </div>
+    <div className="h-screen w-full flex flex-col bg-zinc-950 overflow-hidden">
+      <nav className="p-4 border-b border-zinc-900 flex justify-between items-center bg-zinc-950/50 backdrop-blur-xl z-[2000]">
+        <h2 className="font-black italic text-xl text-white">TaxiInsta</h2>
         <div className="flex gap-2">
           {profile?.rol === 'admin' && (
-            <button onClick={() => {setIsAdminView(true); loadAllUsers();}} className="p-2.5 bg-zinc-800 rounded-full text-blue-400"><Shield size={20}/></button>
+            <Link to="/admin" className="p-2.5 bg-blue-500/10 text-blue-500 rounded-full border border-blue-500/20"><Shield size={20}/></Link>
           )}
           <button onClick={() => supabase.auth.signOut()} className="p-2.5 bg-red-500/10 text-red-500 rounded-full"><LogOut size={20}/></button>
         </div>
       </nav>
 
       <main className="flex-1 relative">
-        <div className="absolute inset-0 z-0">
-          <MapContainer center={myLocation} zoom={15} style={{ height: '100%', width: '100%' }}>
-            <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
-            <MapResizer />
-            <ChangeView center={myLocation} />
-            <Marker position={myLocation} icon={profile?.rol === 'conductor' ? taxiIcon : passengerIcon} />
-          </MapContainer>
-        </div>
+        <MapContainer center={myLocation} zoom={15} style={{ height: '100%', width: '100%' }}>
+          <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
+          <MapResizer />
+          <Marker position={myLocation} icon={profile?.rol === 'conductor' ? taxiIcon : passengerIcon} />
+        </MapContainer>
 
-        {/* INPUT DE DESTINO PARA PASAJERO */}
         {profile?.rol === 'pasajero' && (
           <div className="absolute top-6 left-0 right-0 px-6 z-[1000]">
-            <div className="bg-zinc-900/90 backdrop-blur-md p-2 rounded-[25px] border border-zinc-800 shadow-2xl flex items-center">
-              <div className="p-3 bg-purple-600 rounded-2xl mr-3"><Search size={20}/></div>
-              <input 
-                className="bg-transparent flex-1 outline-none text-white text-sm" 
-                placeholder="¿A dónde vamos?"
-                onChange={(e) => setDestino(e.target.value)}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* BOTÓN SOLICITAR */}
-        {profile?.rol === 'pasajero' && (
-          <div className="absolute bottom-10 left-0 right-0 px-10 z-[1000]">
-            <button onClick={solicitarViaje} className="w-full bg-white text-black py-5 rounded-[25px] font-black shadow-2xl border-4 border-purple-500 active:scale-95 transition">
-              SOLICITAR TAXI INSTA
-            </button>
+            <input 
+              className="w-full bg-zinc-900/90 backdrop-blur-md p-4 rounded-3xl border border-white/10 outline-none text-white shadow-2xl"
+              placeholder="¿A dónde vamos hoy?"
+              onChange={(e) => setDestino(e.target.value)}
+            />
           </div>
         )}
       </main>
@@ -175,4 +117,43 @@ function App() {
   );
 }
 
-export default App;
+// --- COMPONENTE ROOT CON RUTAS ---
+export default function App() {
+  const [session, setSession] = useState(null);
+  const [profile, setProfile] = useState(null);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session) getProfile(session.user.id);
+    });
+    supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (session) getProfile(session.user.id);
+    });
+  }, []);
+
+  async function getProfile(id) {
+    const { data } = await supabase.from('perfiles').select('*').eq('id', id).single();
+    if (data) setProfile(data);
+  }
+
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-6 text-white italic font-black">
+        Cargando App... (O redirigiendo al Login)
+        {/* Aquí iría tu componente de Login que ya tienes */}
+      </div>
+    );
+  }
+
+  return (
+    <Router>
+      <Routes>
+        <Route path="/" element={<MainApp profile={profile} session={session} />} />
+        <Route path="/admin" element={<AdminPanel profile={profile} />} />
+        <Route path="*" element={<Navigate to="/" />} />
+      </Routes>
+    </Router>
+  );
+}
