@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, useMap, useMapEvents } from 'react-leaflet';
-import { LogOut, X, Navigation, Car, User, Clock, Bell } from 'lucide-react';
+import { LogOut, X, Navigation, Car, User, Clock, Bell, Shield } from 'lucide-react'; // Shield reintegrado
 import { supabase } from './supabaseClient';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -27,25 +27,31 @@ export default function App() {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Lógica de Autenticación Mejorada (Sin Pantalla en Blanco)
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    const getData = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
       setSession(session);
-      if (session) fetchProfile(session.user);
-      else setLoading(false);
-    });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        const { data } = await supabase.from('perfiles').select('*').eq('id', session.user.id).maybeSingle();
+        setProfile(data);
+      }
+      setLoading(false);
+    };
+    getData();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setSession(session);
-      if (session) fetchProfile(session.user);
-      else { setProfile(null); setLoading(false); }
+      if (session) {
+        const { data } = await supabase.from('perfiles').select('*').eq('id', session.user.id).maybeSingle();
+        setProfile(data);
+      } else {
+        setProfile(null);
+      }
+      setLoading(false);
     });
     return () => subscription.unsubscribe();
   }, []);
-
-  async function fetchProfile(user) {
-    const { data } = await supabase.from('perfiles').select('*').eq('id', user.id).maybeSingle();
-    setProfile(data);
-    setLoading(false);
-  }
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -53,7 +59,12 @@ export default function App() {
     window.location.replace('/');
   };
 
-  if (loading) return <div className="h-screen bg-black flex items-center justify-center text-white font-black italic animate-pulse tracking-tighter text-2xl">TAXINSTA</div>;
+  if (loading) return (
+    <div className="h-screen bg-black flex flex-col items-center justify-center text-white font-black italic">
+      <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin mb-4"></div>
+      TAXINSTA
+    </div>
+  );
 
   return (
     <Router>
@@ -77,10 +88,11 @@ function MainMap({ profile, onLogout }) {
 
   const isPasajero = profile?.rol === 'pasajero';
   const isConductor = profile?.rol === 'conductor';
+  const isAdmin = profile?.rol === 'admin';
 
-  // Sincronización Inicial
   useEffect(() => {
     const sync = async () => {
+      if (!profile) return;
       const { data } = await supabase.from('viajes').select('*')
         .or(`pasajero_id.eq.${profile.id},conductor_id.eq.${profile.id}`)
         .in('estado', ['pendiente', 'en_camino']).maybeSingle();
@@ -89,20 +101,18 @@ function MainMap({ profile, onLogout }) {
         if (data.cond_lat) setTaxiPos([data.cond_lat, data.cond_lon]);
       }
     };
-    if (profile) sync();
+    sync();
   }, [profile]);
 
-  // Realtime
   useEffect(() => {
+    if (!profile) return;
     const channel = supabase.channel('taxi_live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'viajes' }, (payload) => {
         const { eventType, new: newR } = payload;
-
         if (isConductor && !viajeActivo) {
           if (eventType === 'INSERT' && newR.estado === 'pendiente') setOfertaConductor(newR);
           if (eventType === 'UPDATE' && newR.conductor_id !== null) setOfertaConductor(null);
         }
-
         if (newR.pasajero_id === profile.id || newR.conductor_id === profile.id) {
           if (newR.estado === 'finalizado') {
             setViajeActivo(null);
@@ -117,24 +127,11 @@ function MainMap({ profile, onLogout }) {
     return () => supabase.removeChannel(channel);
   }, [profile, isConductor, viajeActivo]);
 
-  // GPS Conductor
-  useEffect(() => {
-    let watchId;
-    if (isConductor && viajeActivo?.estado === 'en_camino') {
-      watchId = navigator.geolocation.watchPosition(async (pos) => {
-        await supabase.from('viajes').update({ cond_lat: pos.coords.latitude, cond_lon: pos.coords.longitude }).eq('id', viajeActivo.id);
-      }, null, { enableHighAccuracy: true });
-    }
-    return () => navigator.geolocation.clearWatch(watchId);
-  }, [isConductor, viajeActivo]);
-
   const aceptarServicio = async () => {
     const tempOferta = ofertaConductor;
-    setOfertaConductor(null); // Limpieza inmediata (Optimista)
-
+    setOfertaConductor(null);
     const { data, error } = await supabase.from('viajes').update({ 
-      estado: 'en_camino', 
-      conductor_id: profile.id 
+      estado: 'en_camino', conductor_id: profile.id 
     }).eq('id', tempOferta.id).is('conductor_id', null).select();
 
     if (error || !data.length) {
@@ -154,48 +151,54 @@ function MainMap({ profile, onLogout }) {
         {taxiPos && <Marker position={taxiPos} icon={iconTaxi} />}
       </MapContainer>
 
-      {/* ERROR OVERLAY */}
+      {/* HEADER PRINCIPAL */}
+      <div className="absolute top-6 left-6 right-6 z-50 flex justify-between items-center pointer-events-none">
+        <div className="bg-zinc-900/95 backdrop-blur-xl p-4 rounded-3xl border border-white/10 pointer-events-auto shadow-2xl">
+          <h1 className="text-white font-black italic text-xl tracking-tighter leading-none">TaxiInsta</h1>
+          <p className="text-green-500 text-[10px] font-black uppercase mt-1 tracking-widest leading-none">{profile?.rol || 'Cargando...'}</p>
+        </div>
+        
+        <div className="flex gap-2 pointer-events-auto">
+          {/* BOTÓN ESCUDO AZUL (SÓLO ADMIN) */}
+          {isAdmin && (
+            <Link to="/admin" className="p-4 bg-blue-600 text-white rounded-full shadow-2xl active:scale-90 transition-transform flex items-center justify-center">
+              <Shield size={20} fill="currentColor" />
+            </Link>
+          )}
+          <button onClick={onLogout} className="p-4 bg-zinc-900/90 text-white rounded-full border border-white/10 shadow-2xl active:scale-95 transition-transform">
+            <LogOut size={20}/>
+          </button>
+        </div>
+      </div>
+
       {msgError && (
-        <div className="absolute top-24 left-0 right-0 z-[2000] px-6 animate-bounce">
-          <div className="bg-red-600 text-white py-4 rounded-2xl text-center font-black text-xs shadow-2xl uppercase tracking-tighter">
-            {msgError}
-          </div>
+        <div className="absolute top-24 left-0 right-0 z-[100] px-6">
+          <div className="bg-red-600 text-white py-4 rounded-2xl text-center font-black text-xs shadow-2xl uppercase">{msgError}</div>
         </div>
       )}
 
-      {/* HEADER */}
-      <div className="absolute top-6 left-6 right-6 z-50 flex justify-between items-center pointer-events-none">
-        <div className="bg-zinc-900/90 backdrop-blur-xl p-4 rounded-3xl border border-white/10 pointer-events-auto shadow-2xl">
-          <h1 className="text-white font-black italic text-xl tracking-tighter leading-none">TaxiInsta</h1>
-          <p className="text-green-500 text-[10px] font-black uppercase mt-1 tracking-widest">{profile.rol}</p>
-        </div>
-        <button onClick={onLogout} className="p-4 bg-zinc-900/90 text-white rounded-full border border-white/10 pointer-events-auto shadow-2xl active:scale-95 transition-transform">
-          <LogOut size={20}/>
-        </button>
-      </div>
-
-      {/* PASAJERO */}
+      {/* UI SEGÚN ROL */}
       {isPasajero && (
         <div className="absolute bottom-10 left-0 right-0 px-8 z-50">
           {!viajeActivo ? (
-            <div className="bg-zinc-900/95 p-6 rounded-[40px] border border-white/10 shadow-2xl space-y-4 animate-in slide-in-from-bottom-10">
+            <div className="bg-zinc-900/95 p-6 rounded-[40px] border border-white/10 shadow-2xl space-y-4">
               <div className="flex bg-black/40 p-1.5 rounded-2xl">
-                <button onClick={() => setModo('origen')} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${modo === 'origen' ? 'bg-white text-black shadow-lg' : 'text-zinc-500'}`}>Recogida</button>
-                <button onClick={() => setModo('destino')} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${modo === 'destino' ? 'bg-white text-black shadow-lg' : 'text-zinc-500'}`}>Destino</button>
+                <button onClick={() => setModo('origen')} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${modo === 'origen' ? 'bg-white text-black' : 'text-zinc-500'}`}>Recogida</button>
+                <button onClick={() => setModo('destino')} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${modo === 'destino' ? 'bg-white text-black' : 'text-zinc-500'}`}>Destino</button>
               </div>
               <button onClick={async () => {
                 await supabase.from('viajes').insert([{ pasajero_id: profile.id, nombre_pasajero: profile.nombre, origen_lat: origen[0], origen_lon: origen[1], destino_lat: destino[0], destino_lon: destino[1], tarifa_estimada: 2.00, estado: 'pendiente' }]);
-              }} disabled={!destino} className="w-full bg-white text-black py-5 rounded-3xl font-black uppercase italic text-xl shadow-xl active:scale-95 disabled:opacity-20">SOLICITAR AHORA</button>
+              }} disabled={!destino} className="w-full bg-white text-black py-5 rounded-3xl font-black uppercase italic text-xl shadow-xl active:scale-95 disabled:opacity-20 transition-all">SOLICITAR AHORA</button>
             </div>
           ) : (
-            <div className="bg-white p-7 rounded-[45px] shadow-2xl border-t-8 border-purple-600 animate-in zoom-in-95">
+            <div className="bg-white p-7 rounded-[45px] shadow-2xl border-t-8 border-purple-600">
               <div className="flex items-center gap-5">
                 <div className={`p-4 rounded-full ${viajeActivo.estado === 'pendiente' ? 'bg-amber-100 text-amber-600 animate-pulse' : 'bg-green-100 text-green-600'}`}>
                   {viajeActivo.estado === 'pendiente' ? <Clock size={32}/> : <Car size={32}/>}
                 </div>
                 <div>
                   <h3 className="text-black font-black italic text-2xl uppercase leading-none">{viajeActivo.estado === 'pendiente' ? "Buscando..." : "Asignado"}</h3>
-                  <p className="text-zinc-400 text-[10px] font-bold uppercase mt-1 tracking-widest">{viajeActivo.estado === 'pendiente' ? "Esperando unidad" : "En camino a tu ubicación"}</p>
+                  <p className="text-zinc-400 text-[10px] font-bold uppercase mt-1 tracking-widest leading-none">Valle de la pascua</p>
                 </div>
               </div>
             </div>
@@ -203,35 +206,27 @@ function MainMap({ profile, onLogout }) {
         </div>
       )}
 
-      {/* CONDUCTOR */}
       {isConductor && (
         <div className="absolute bottom-10 left-0 right-0 px-8 z-50">
           {ofertaConductor && !viajeActivo && (
             <div className="bg-white p-8 rounded-[45px] shadow-2xl border-t-[12px] border-purple-600 animate-in slide-in-from-bottom-20">
               <div className="flex justify-between items-center mb-6">
-                <div>
-                  <h2 className="text-black font-black italic text-3xl tracking-tighter leading-none uppercase">Nuevo Viaje</h2>
-                  <p className="text-zinc-400 text-[10px] font-bold uppercase mt-1 tracking-widest">Valle de la pascua</p>
-                </div>
-                <div className="bg-purple-600 text-white p-4 rounded-2xl shadow-lg animate-bounce"><Bell size={24}/></div>
+                <h2 className="text-black font-black italic text-3xl tracking-tighter uppercase leading-none">Nuevo Viaje</h2>
+                <div className="bg-purple-600 text-white p-4 rounded-2xl animate-bounce"><Bell size={24}/></div>
               </div>
-              <button onClick={aceptarServicio} className="w-full bg-black text-white py-6 rounded-3xl font-black uppercase italic text-2xl shadow-xl active:scale-95 transition-transform tracking-tight">ACEPTAR</button>
+              <button onClick={aceptarServicio} className="w-full bg-black text-white py-6 rounded-3xl font-black uppercase italic text-2xl shadow-xl active:scale-95">ACEPTAR</button>
             </div>
           )}
-
           {viajeActivo && (
             <div className="bg-zinc-900/95 p-6 rounded-[40px] border border-white/10 text-white shadow-2xl">
-              <div className="flex items-center gap-4 mb-6 px-2">
-                <div className="p-4 bg-purple-600 rounded-full shadow-lg shadow-purple-500/20"><Navigation size={24}/></div>
-                <div>
-                  <p className="font-black italic uppercase text-lg leading-none">Viaje en Curso</p>
-                  <p className="text-[9px] text-zinc-500 font-bold uppercase mt-1 tracking-widest">GPS Activo</p>
-                </div>
+              <div className="flex items-center gap-4 mb-6">
+                <div className="p-4 bg-purple-600 rounded-full"><Navigation size={24}/></div>
+                <p className="font-black italic uppercase text-lg leading-none">Viaje en Curso</p>
               </div>
               <button onClick={async () => {
                 await supabase.from('viajes').update({ estado: 'finalizado' }).eq('id', viajeActivo.id);
                 setViajeActivo(null);
-              }} className="w-full bg-green-600 py-5 rounded-3xl font-black uppercase italic text-lg shadow-xl active:bg-green-700 transition-all">FINALIZAR Y COBRAR</button>
+              }} className="w-full bg-green-600 py-5 rounded-3xl font-black uppercase italic text-lg active:bg-green-700">FINALIZAR VIAJE</button>
             </div>
           )}
         </div>
@@ -240,7 +235,7 @@ function MainMap({ profile, onLogout }) {
   );
 }
 
-// --- LOGIN ---
+// --- LOGIN (Mantenido para consistencia) ---
 function AuthScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -251,23 +246,21 @@ function AuthScreen() {
     if (error) alert(error.message);
   };
   return (
-    <div className="min-h-screen bg-black flex items-center justify-center p-6 text-white">
+    <div className="min-h-screen bg-black flex items-center justify-center p-6 text-white font-sans">
       <div className="w-full max-w-sm bg-zinc-900 border border-zinc-800 p-12 rounded-[50px] shadow-2xl text-center">
-        <h1 className="text-5xl font-black italic mb-12 tracking-tighter uppercase">TaxiInsta</h1>
+        <h1 className="text-5xl font-black italic mb-12 tracking-tighter uppercase italic">TaxiInsta</h1>
         <form onSubmit={handleAuth} className="space-y-4">
-          <input className="w-full bg-zinc-800 p-5 rounded-3xl border border-zinc-700 outline-none focus:border-purple-500 transition-all" type="email" placeholder="Email" onChange={e => setEmail(e.target.value)} required />
-          <input className="w-full bg-zinc-800 p-5 rounded-3xl border border-zinc-700 outline-none focus:border-purple-500 transition-all" type="password" placeholder="Password" onChange={e => setPassword(e.target.value)} required />
-          <button className="w-full bg-purple-600 p-5 rounded-3xl font-black uppercase tracking-widest text-lg shadow-xl active:scale-95 italic transition-transform mt-4">
-            {isReg ? "Registrar" : "Entrar"}
-          </button>
+          <input className="w-full bg-zinc-800 p-5 rounded-3xl border border-zinc-700 outline-none focus:border-purple-500" type="email" placeholder="Email" onChange={e => setEmail(e.target.value)} required />
+          <input className="w-full bg-zinc-800 p-5 rounded-3xl border border-zinc-700 outline-none focus:border-purple-500" type="password" placeholder="Password" onChange={e => setPassword(e.target.value)} required />
+          <button className="w-full bg-purple-600 p-5 rounded-3xl font-black uppercase tracking-widest text-lg shadow-xl active:scale-95 italic transition-transform mt-4">{isReg ? "Registrar" : "Entrar"}</button>
         </form>
-        <button onClick={() => setIsReg(!isReg)} className="mt-10 text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em]">{isReg ? "Ya tengo cuenta" : "Crear cuenta"}</button>
+        <button onClick={() => setIsReg(!isReg)} className="mt-10 text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] leading-none">{isReg ? "Ya tengo cuenta" : "Crear nueva cuenta"}</button>
       </div>
     </div>
   );
 }
 
-// --- ADMIN ---
+// --- ADMIN PANEL ---
 function AdminPanel({ profile }) {
   const [users, setUsers] = useState([]);
   useEffect(() => {
